@@ -18,6 +18,7 @@ package org.wso2.datamapper.engine.core.schemas;
 
 import org.apache.avro.Schema;
 import org.apache.avro.Schema.Parser;
+import org.wso2.datamapper.engine.core.exceptions.InvalidPayloadException;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -50,7 +51,7 @@ public class AVROSchema implements org.wso2.datamapper.engine.core.Schema {
     }
 
     @Override
-    public String getElementTypeByName(String elementName) {
+    public String getElementTypeByName(String elementStack) throws InvalidPayloadException {
         return null;
     }
 
