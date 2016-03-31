@@ -51,7 +51,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
-
 /**
  * By using the input schema, output schema and mapping configuration,
  * DataMapperMediator generates the output required by the next mediator for the
@@ -201,8 +200,7 @@ public class DataMapperMediator extends AbstractMediator implements ManagedLifec
         String outSchemaKey = outputSchemaKey.evaluateValue(synCtx);
 
         //checks the availability of the inputs for data mapping
-        if (!(StringUtils.isNotEmpty(configKey)
-                && StringUtils.isNotEmpty(inSchemaKey) && StringUtils
+        if (!(StringUtils.isNotEmpty(configKey) && StringUtils.isNotEmpty(inSchemaKey) && StringUtils
                 .isNotEmpty(outSchemaKey))) {
             handleException("DataMapper mediator : Invalid configurations", synCtx);
         } else {
@@ -236,31 +234,65 @@ public class DataMapperMediator extends AbstractMediator implements ManagedLifec
      * @throws SynapseException
      * @throws IOException
      */
-    private void transform(MessageContext synCtx, String configkey,
-                           String inSchemaKey, String outSchemaKey, String inputType,
-                           String outputType) {
+    private void transform(MessageContext synCtx, String configkey, String inSchemaKey, String outSchemaKey,
+            String inputType, String outputType) {
         //MappingResourceLoader mappingResourceLoader = null;
-        OMElement outputMessage = null;
+        OMElement outputContent = null, outputMessage = null;
+        String inputParentTagName = "employees";
+        String outputParentTagName = "engineers";
+        String outputVariable = "";
+        int numChunks = 2;
         try {
             // mapping resources needed to get the final output
             mappingResourceLoader = getMappingResourceLoader(synCtx, configkey, inSchemaKey, outSchemaKey);
 
-            // create input model builder to convert input payload to generic data holder
-            InputModelBuilder inputModelBuilder = new InputModelBuilder(getDataType(inputType),
-                    DMModelTypes.ModelType.JSON_STRING, mappingResourceLoader.getInputSchema());
-            //execute mapping on the input stream
-            MappingHandler mappingHandler = new MappingHandler();
-            OutputMessageBuilder outputMessageBuilder = new OutputMessageBuilder(getDataType(outputType),
-                    DMModelTypes.ModelType.JAVA_MAP, mappingResourceLoader.getOutputSchema());
+            if (InputOutputDataTypes.DataType.fromString(inputType) == InputOutputDataTypes.DataType.XML
+                    && InputOutputDataTypes.DataType.fromString(outputType) == InputOutputDataTypes.DataType.XML) {
 
-            Executable executor = ScriptExecutorFactory.getScriptExecutor();
+                DivideXMLFileToChunks xmlFileToChunks = new DivideXMLFileToChunks(synCtx, inputParentTagName,
+                        numChunks);
+                CombineXMLFileChunks combineXMLFileChunks = null;
+                while (xmlFileToChunks.hasNext()) {
+                    // create input model builder to convert input payload to generic data holder
+                    InputModelBuilder inputModelBuilder = new InputModelBuilder(getDataType(inputType),
+                            DMModelTypes.ModelType.JSON_STRING, mappingResourceLoader.getInputSchema());
+                    //execute mapping on the input stream
+                    MappingHandler mappingHandler = new MappingHandler();
+                    OutputMessageBuilder outputMessageBuilder = new OutputMessageBuilder(getDataType(outputType),
+                            DMModelTypes.ModelType.JAVA_MAP, mappingResourceLoader.getOutputSchema());
+                    Executable executor = ScriptExecutorFactory.getScriptExecutor();
+                    String outputString = mappingHandler
+                            .doMap(getInputStream(xmlFileToChunks.next(), inputType), mappingResourceLoader,
+                                    inputModelBuilder, outputMessageBuilder, executor);
+                    ScriptExecutorFactory.releaseScriptExecutor(executor);
+                    outputContent = AXIOMUtil.stringToOM(outputString);
+                    if (combineXMLFileChunks == null) {
+                        combineXMLFileChunks = new CombineXMLFileChunks(outputContent, outputParentTagName);
+                    } else {
+                        combineXMLFileChunks.add(outputContent);
+                    }
+                }
+                outputVariable = combineXMLFileChunks.getRoot().toString();
+                log.info(outputVariable);
 
-            String outputVariable=mappingHandler.doMap(getInputStream(synCtx, inputType), mappingResourceLoader,
-                    inputModelBuilder, outputMessageBuilder, executor);
+            } else {
+                // create input model builder to convert input payload to generic data holder
+                InputModelBuilder inputModelBuilder = new InputModelBuilder(getDataType(inputType),
+                        DMModelTypes.ModelType.JSON_STRING, mappingResourceLoader.getInputSchema());
+                //execute mapping on the input stream
+                MappingHandler mappingHandler = new MappingHandler();
+                OutputMessageBuilder outputMessageBuilder = new OutputMessageBuilder(getDataType(outputType),
+                        DMModelTypes.ModelType.JAVA_MAP, mappingResourceLoader.getOutputSchema());
 
-            ScriptExecutorFactory.releaseScriptExecutor(executor);
+                Executable executor = ScriptExecutorFactory.getScriptExecutor();
 
-            if(InputOutputDataTypes.DataType.XML.toString().equals(outputType)){
+                outputVariable = mappingHandler
+                        .doMap(getInputStream(synCtx, inputType), mappingResourceLoader, inputModelBuilder,
+                                outputMessageBuilder, executor);
+
+                ScriptExecutorFactory.releaseScriptExecutor(executor);
+            }
+            if (InputOutputDataTypes.DataType.XML.toString().equals(outputType)) {
                 outputMessage = AXIOMUtil.stringToOM(outputVariable);
                 if (outputMessage != null) {
                     if (log.isDebugEnabled()) {
@@ -275,15 +307,12 @@ public class DataMapperMediator extends AbstractMediator implements ManagedLifec
                             }
                             QName resultQName = firstChild.getQName();
                             // TODO use XPath
-                            if (resultQName.getLocalPart().equals("Envelope")
-                                    && (resultQName
-                                    .getNamespaceURI()
-                                    .equals(SOAP11Constants.SOAP_ENVELOPE_NAMESPACE_URI) || resultQName
-                                    .getNamespaceURI()
-                                    .equals(SOAP12Constants.SOAP_ENVELOPE_NAMESPACE_URI))) {
+                            if (resultQName.getLocalPart().equals("Envelope") && (
+                                    resultQName.getNamespaceURI().equals(SOAP11Constants.SOAP_ENVELOPE_NAMESPACE_URI)
+                                            || resultQName.getNamespaceURI()
+                                            .equals(SOAP12Constants.SOAP_ENVELOPE_NAMESPACE_URI))) {
                                 SOAPEnvelope soapEnvelope = AXIOMUtils
-                                        .getSOAPEnvFromOM(outputMessage
-                                                .getFirstElement());
+                                        .getSOAPEnvFromOM(outputMessage.getFirstElement());
                                 if (soapEnvelope != null) {
                                     try {
                                         if (log.isDebugEnabled()) {
@@ -291,27 +320,24 @@ public class DataMapperMediator extends AbstractMediator implements ManagedLifec
                                         }
                                         synCtx.setEnvelope(soapEnvelope);
                                     } catch (AxisFault axisFault) {
-                                        handleException("Invalid Envelope",
-                                                axisFault, synCtx);
+                                        handleException("Invalid Envelope", axisFault, synCtx);
                                     }
                                 }
                             } else {
-                                synCtx.getEnvelope().getBody().getFirstElement()
-                                        .detach();
-                                synCtx.getEnvelope().getBody()
-                                        .addChild(outputMessage);
+                                synCtx.getEnvelope().getBody().getFirstElement().detach();
+                                synCtx.getEnvelope().getBody().addChild(outputMessage);
 
                             }
                         } else {
-                            synCtx.getEnvelope().getBody().getFirstElement()
-                                    .detach();
+                            synCtx.getEnvelope().getBody().getFirstElement().detach();
                             synCtx.getEnvelope().getBody().addChild(outputMessage);
                         }
                     }
                 }
 
-            }else if(InputOutputDataTypes.DataType.JSON.toString().equals(outputType)){
-                org.apache.axis2.context.MessageContext axis2MessageContext = ((Axis2MessageContext) synCtx).getAxis2MessageContext();
+            } else if (InputOutputDataTypes.DataType.JSON.toString().equals(outputType)) {
+                org.apache.axis2.context.MessageContext axis2MessageContext = ((Axis2MessageContext) synCtx)
+                        .getAxis2MessageContext();
                 JsonUtil.newJsonPayload(axis2MessageContext, outputVariable, true, true);
             }
         } catch (Exception e) {
@@ -328,25 +354,24 @@ public class DataMapperMediator extends AbstractMediator implements ManagedLifec
 
         InputStream inputStream = null;
         switch (InputOutputDataTypes.DataType.fromString(inputType)) {
-            case XML:
-            case CSV:
-                inputStream = new ByteArrayInputStream(
-                        context.getEnvelope().getFirstElement().toString().getBytes(StandardCharsets.UTF_8));
-                break;
-            case JSON:
-                org.apache.axis2.context.MessageContext a2mc = ((Axis2MessageContext) context).getAxis2MessageContext();
-                if (JsonUtil.hasAJsonPayload(a2mc)) {
-                    inputStream = JsonUtil.getJsonPayload(a2mc);
-                }
-                break;
-            default:
-                inputStream = new ByteArrayInputStream(
-                        context.getEnvelope().getBody().getFirstElement().toString().getBytes(StandardCharsets.UTF_8));
-                break;
+        case XML:
+        case CSV:
+            inputStream = new ByteArrayInputStream(
+                    context.getEnvelope().getBody().getFirstElement().toString().getBytes(StandardCharsets.UTF_8));
+            break;
+        case JSON:
+            org.apache.axis2.context.MessageContext a2mc = ((Axis2MessageContext) context).getAxis2MessageContext();
+            if (JsonUtil.hasAJsonPayload(a2mc)) {
+                inputStream = JsonUtil.getJsonPayload(a2mc);
+            }
+            break;
+        default:
+            inputStream = new ByteArrayInputStream(
+                    context.getEnvelope().getBody().getFirstElement().toString().getBytes(StandardCharsets.UTF_8));
+            break;
         }
         return inputStream;
     }
-
 
     /**
      * State that DataMapperMediator interacts with the message context
@@ -381,16 +406,15 @@ public class DataMapperMediator extends AbstractMediator implements ManagedLifec
      * @return the MappingResourceLoader object
      * @throws IOException
      */
-    private static MappingResourceLoader getMappingResourceLoader(
-            MessageContext context, String configkey, String inSchemaKey, String outSchemaKey) throws IOException {
+    private static MappingResourceLoader getMappingResourceLoader(MessageContext context, String configkey,
+            String inSchemaKey, String outSchemaKey) throws IOException {
 
         InputStream configFileInputStream = getRegistryResource(context, configkey);
         InputStream inputSchemaStream = getRegistryResource(context, inSchemaKey);
         InputStream outputSchemaStream = getRegistryResource(context, outSchemaKey);
 
         // Creates a new mappingResourceLoader
-        mappingResourceLoader = new MappingResourceLoader(inputSchemaStream,
-                outputSchemaStream, configFileInputStream);
+        mappingResourceLoader = new MappingResourceLoader(inputSchemaStream, outputSchemaStream, configFileInputStream);
         return mappingResourceLoader;
     }
 
