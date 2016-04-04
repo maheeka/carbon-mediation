@@ -246,8 +246,7 @@ public class DataMapperMediator extends AbstractMediator implements ManagedLifec
             // mapping resources needed to get the final output
             mappingResourceLoader = getMappingResourceLoader(synCtx, configkey, inSchemaKey, outSchemaKey);
 
-            if (InputOutputDataTypes.DataType.fromString(inputType) == InputOutputDataTypes.DataType.XML
-                    && InputOutputDataTypes.DataType.fromString(outputType) == InputOutputDataTypes.DataType.XML) {
+            if (inputParentTagName!="") {
 
                 DivideXMLFileToChunks xmlFileToChunks = new DivideXMLFileToChunks(synCtx, inputParentTagName,
                         numChunks);
